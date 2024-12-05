@@ -22,7 +22,7 @@ jobs:
           -
             name: Docker Hub
             registry: ''
-            slug: ghactionstest/ghactionstest
+            slug: docker.io/ghactionstest/ghactionstest
             username_secret: DOCKERHUB_USERNAME
             password_secret: DOCKERHUB_TOKEN
             type: remote
