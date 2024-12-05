@@ -1,0 +1,115 @@
+# reusable workflow
+name: .buildkit-5561
+
+on:
+  workflow_call:
+    inputs:
+      id:
+        required: false
+        type: string
+      type:
+        required: true
+        type: string
+      name:
+        required: true
+        type: string
+      registry:
+        required: false
+        type: string
+      slug:
+        required: false
+        type: string
+      username_secret:
+        required: false
+        type: string
+      password_secret:
+        required: false
+        type: string
+
+env:
+  HARBOR_VERSION: v2.7.0
+  NEXUS_VERSION: 3.47.1
+  DISTRIBUTION_VERSION: 2.8.1
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Set up env
+        if: inputs.type == 'local'
+        run: |
+          cat ./.github/e2e/${{ inputs.id }}/env >> $GITHUB_ENV
+      -
+        name: Set up BuildKit config
+        run: |
+          touch /tmp/buildkitd.toml
+          if [ "${{ inputs.type }}" = "local" ]; then
+            echo -e "[registry.\"${{ env.REGISTRY_FQDN }}\"]\nhttp = true\ninsecure = true" > /tmp/buildkitd.toml
+          fi
+      -
+        name: Set up Docker daemon
+        if: inputs.type == 'local'
+        run: |
+          if [ ! -e /etc/docker/daemon.json ]; then
+            echo '{}' | tee /etc/docker/daemon.json >/dev/null
+          fi
+          DOCKERD_CONFIG=$(jq '.+{"insecure-registries":["http://${{ env.REGISTRY_FQDN }}"]}' /etc/docker/daemon.json)
+          sudo tee /etc/docker/daemon.json <<<"$DOCKERD_CONFIG" >/dev/null
+          sudo service docker restart
+      -
+        name: Install ${{ inputs.name }}
+        if: inputs.type == 'local'
+        run: |
+          sudo -E bash ./.github/e2e/${{ inputs.id }}/install.sh
+          sudo chown $(id -u):$(id -g) -R ~/.docker
+      -
+        name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      -
+        name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          buildkitd-config: /tmp/buildkitd.toml
+          buildkitd-flags: --debug --allow-insecure-entitlement security.insecure --allow-insecure-entitlement network.host
+          driver-opts: |
+            network=host
+      -
+        name: Login to Registry
+        if: (env.REGISTRY_USER || inputs.username_secret) != ''
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_FQDN || inputs.registry }}
+          username: ${{ env.REGISTRY_USER || secrets[inputs.username_secret] }}
+          password: ${{ env.REGISTRY_PASSWORD || secrets[inputs.password_secret] }}
+      -
+        name: Build and push
+        uses: ./
+        with:
+          context: ./test
+          file: ./test/multi.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.REGISTRY_SLUG || inputs.slug }}:${{ github.run_id }}
+      -
+        name: Inspect image
+        run: |
+          docker pull ${{ env.REGISTRY_SLUG || inputs.slug }}:${{ github.run_id }}
+          docker image inspect ${{ env.REGISTRY_SLUG || inputs.slug }}:${{ github.run_id }}
+      -
+        name: Check manifest
+        run: |
+          docker buildx imagetools inspect ${{ env.REGISTRY_SLUG || inputs.slug }}:${{ github.run_id }} --format '{{json .}}'
+      -
+        # https://oras.land/docs/commands/oras_attach#examples
+        name: Attach file to the image
+        run: |
+          echo "Hello, world!" > hi.txt
+          oras attach --artifact-type doc/example ${{ env.REGISTRY_SLUG || inputs.slug }}:${{ github.run_id }} hi.txt
+      -
+        name: Check manifest again
+        run: |
+          docker buildx imagetools inspect ${{ env.REGISTRY_SLUG || inputs.slug }}:${{ github.run_id }} --format '{{json .}}'
