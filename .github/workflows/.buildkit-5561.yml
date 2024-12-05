@@ -108,7 +108,7 @@ jobs:
         name: Attach file to the image
         run: |
           echo "Hello, world!" > hi.txt
-          oras attach --artifact-type doc/example ${{ env.REGISTRY_SLUG || inputs.slug }}:${{ github.run_id }} hi.txt
+          oras attach --debug --artifact-type doc/example ${{ env.REGISTRY_SLUG || inputs.slug }}:${{ github.run_id }} hi.txt
       -
         name: Check manifest again
         run: |
